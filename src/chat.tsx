@@ -30,7 +30,9 @@ type MessageUpdatedData = { messageUpdated: Pick<Message, "id" | "status" | "upd
 
 const Item: React.FC<Message> = ({ text, sender, status }) => {
   return (
-    <div className={css.item}>
+    // Invert each item back, since we invert the scroller below
+    // See: https://github.com/petyosi/react-virtuoso/discussions/1177#discussioncomment-11815508
+    <div className={css.item} style={{ transform: "scaleY(-1)" }}>
       <div
         className={cn(
           css.message,
@@ -73,8 +75,8 @@ const MESSAGE_UPDATED_SUBSCRIPTION = gql`
 `;
 
 const GET_MESSAGES = gql`
-  query GetMessages {
-    messages {
+  query GetMessages($first: Int, $after: MessagesCursor, $before: MessagesCursor) {
+    messages(first: $first, after: $after, before: $before) {
       edges {
         node {
           id
@@ -108,8 +110,18 @@ const SEND_MESSAGE_MUTATION = gql`
   }
 `;
 
-const MessagesList = () => {
-  const { data, subscribeToMore, loading } = useQuery<MessagesQueryData>(GET_MESSAGES);
+const PAGE_SIZE = 20;
+
+export const Chat: React.FC = () => {
+  
+  const { data, subscribeToMore, loading, fetchMore } = useQuery<MessagesQueryData>(
+    GET_MESSAGES,
+    {
+      variables: { first: PAGE_SIZE },
+      notifyOnNetworkStatusChange: true,
+    }
+  );
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
 
   useEffect(() => {
     const unsubscribeAdded = subscribeToMore<MessageAddedData>({
@@ -176,30 +188,29 @@ const MessagesList = () => {
     };
   }, [subscribeToMore]);
 
-const virtuosoHandleRef = useRef<VirtuosoHandle>(null);
-return (
-  <div className={css.container}>
-    {loading ? (
-      <span className={css.bigLoader} aria-label="Loading messages..." />
-    ) : (
-      <Virtuoso
-        ref={virtuosoHandleRef}
-        className={css.list}
-        data={data?.messages.edges.map((edge) => edge.node)}
-        itemContent={getItem}
-        initialScrollTop={Infinity} // TODO: first unread message
-      />
-    )}
-  </div>
-)
-}
+  const virtuosoHandleRef = useRef<VirtuosoHandle>(null);
 
-export const Chat: React.FC = () => {
+  const handleEndReached = async () => {
+    // Workaround for Virtuoso startReached https://github.com/petyosi/react-virtuoso/discussions/1177#discussioncomment-11815508
+    if (isFetchingMore) return;
+    const pageInfo = data?.messages.pageInfo;
+    const before = pageInfo?.startCursor;
+    if (!pageInfo || !pageInfo.hasPreviousPage || !before) return;
+    setIsFetchingMore(true);
+    try {
+      await fetchMore({
+        variables: { before, first: PAGE_SIZE },
+      });
+    } finally {
+      setIsFetchingMore(false);
+    }
+  };
+
   const [sendMessage] = useMutation(SEND_MESSAGE_MUTATION, {
     update(cache, { data }) {
       if (!data?.sendMessage) return;
       const real = data.sendMessage;
-      cache.updateQuery<MessagesQueryData>({ query: GET_MESSAGES }, (prev) => {
+      cache.updateQuery<MessagesQueryData>({ query: GET_MESSAGES, variables: { first: PAGE_SIZE } }, (prev) => {
         if (!prev?.messages) return prev;
         const withoutTemps = prev.messages.edges.filter(
           (e: MessageEdgeType) => !(String(e.node.id).startsWith("temp-") && e.node.text === real.text)
@@ -223,10 +234,33 @@ export const Chat: React.FC = () => {
     },
   });
   const [textMsg, setTextMsg] = useState('')
+
+  const initialLoading = !data && loading;
   
   return (
     <div className={css.root}>
-      <MessagesList />
+      <div className={css.container}>
+        {isFetchingMore && (
+          <div className={css.loadMoreContainer}>
+            <span className={css.loader} aria-label="Loading previous messages..." />
+          </div>
+        )}
+        {initialLoading ? (
+          <span className={css.bigLoader} aria-label="Loading messages..." />
+        ) : (
+          <Virtuoso
+            ref={virtuosoHandleRef}
+            className={css.list}
+            // Reverse the data so the newest message remains visually at the bottom
+            data={[...(data?.messages.edges ?? [])].reverse().map((edge) => edge.node)}
+            computeItemKey={(_i, item) => item.id}
+            itemContent={getItem}
+            // Invert the scroller so endReached becomes the visual "top" of the list
+            style={{ transform: 'scaleY(-1)' }}
+            endReached={handleEndReached}
+          />
+        )}
+      </div>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -246,17 +280,21 @@ export const Chat: React.FC = () => {
             },
           });
           setTextMsg('');
+          virtuosoHandleRef.current?.scrollToIndex({
+            index: 0,
+            behavior: 'auto'
+          })
         }}
         className={css.footer}
       >
         <input
           type="text"
           value={textMsg}
-          onChange={(e) => setTextMsg(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTextMsg(e.target.value)}
           className={css.textInput}
           placeholder="Message text"
         />
-        <button type="submit">Send</button>
+        <button type="submit" disabled={initialLoading || textMsg.trim() === ''}>Send</button>
       </form>
     </div>
   );

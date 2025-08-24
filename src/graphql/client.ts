@@ -1,6 +1,6 @@
 import { ApolloClient, HttpLink, split, InMemoryCache } from "@apollo/client";
 import { GraphQLWsLink } from "@apollo/client/link/subscriptions";
-import { getMainDefinition } from "@apollo/client/utilities";
+import { getMainDefinition, relayStylePagination } from "@apollo/client/utilities";
 import { createClient } from "graphql-ws";
 
 const PORT = 4000;
@@ -28,7 +28,15 @@ const link = split(
   httpLink
 );
 
-const cache = new InMemoryCache({});
+const cache = new InMemoryCache({
+  typePolicies: {
+    Query: {
+      fields: {
+        messages: relayStylePagination(),
+      },
+    },
+  },
+});
 
 export const client = new ApolloClient({
   link,

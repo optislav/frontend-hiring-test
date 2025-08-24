@@ -55,12 +55,16 @@ button {
   cursor: pointer;
   transition: background-color 0.25s;
 }
-button:hover {
+button:hover:not(:disabled) {
   background-color: #0654c6;
 }
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 #root {

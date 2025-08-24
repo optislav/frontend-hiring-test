@@ -25,7 +25,7 @@ const pubsub = new PubSub();
 const MESSAGE_ADDED = "MESSAGE_ADDED";
 const MESSAGE_UPDATED = "MESSAGE_UPDATED";
 
-const messages: Message[] = Array.from(Array(30), (_, index) => ({
+const messages: Message[] = Array.from(Array(150), (_, index) => ({
   id: String(index),
   text: `Message number ${index}`,
   status: MessageStatus.Read,
