@@ -19,7 +19,7 @@ import {
 import { delay } from "./delay";
 
 const PORT = 4000;
-const SIMULATE_NETWORK_PING_DELAY = 2000;
+const SIMULATE_NETWORK_PING_DELAY = 800;
 const pubsub = new PubSub();
 
 const MESSAGE_ADDED = "MESSAGE_ADDED";

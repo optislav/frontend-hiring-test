@@ -19,7 +19,6 @@
 
 .message {
   display: flex;
-  flex-direction: column;
   width: fit-content;
   max-width: 26.25rem;
   padding: 0.75rem;
@@ -48,4 +47,32 @@
 
 .textInput {
   flex: auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loader {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: spin 0.8s linear infinite;
+  align-self: flex-end;
+}
+
+.bigLoader {
+  display: block;
+  margin: 25px auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 3px solid currentColor;
+  border-right-color: transparent;
+  animation: spin 0.8s linear infinite;
+  align-self: flex-end;
 }
