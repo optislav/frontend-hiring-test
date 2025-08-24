@@ -1,5 +1,5 @@
-import React from "react";
-import { ItemContent, Virtuoso } from "react-virtuoso";
+import React, { useEffect, useRef, useState } from "react";
+import { ItemContent, Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import cn from "clsx";
 import {
   MessageSender,
@@ -7,14 +7,7 @@ import {
   type Message,
 } from "../__generated__/resolvers-types";
 import css from "./chat.module.css";
-
-const temp_data: Message[] = Array.from(Array(30), (_, index) => ({
-  id: String(index),
-  text: `Message number ${index}`,
-  status: MessageStatus.Read,
-  updatedAt: new Date().toISOString(),
-  sender: index % 2 ? MessageSender.Admin : MessageSender.Customer,
-}));
+import { gql, useMutation, useQuery } from "@apollo/client";
 
 const Item: React.FC<Message> = ({ text, sender }) => {
   return (
@@ -35,20 +28,100 @@ const getItem: ItemContent<Message, unknown> = (_, data) => {
   return <Item {...data} />;
 };
 
+const MESSAGE_ADDED_SUBSCRIPTION = gql`
+  subscription OnMessageAdded {
+    messageAdded {
+      id
+      text
+      status
+      updatedAt
+      sender
+    }
+  }
+`;
+
 export const Chat: React.FC = () => {
+  const { data, subscribeToMore } = useQuery(gql`
+   query GetMessages {
+      messages {
+        edges {
+          node {
+            id
+            text
+            status
+            updatedAt
+            sender
+          }
+        }
+        pageInfo {
+          hasNextPage
+          hasPreviousPage
+          startCursor
+          endCursor
+        }
+      }
+    }
+  `);
+  const [sendMessage] = useMutation(gql`
+    mutation SendMessage($text: String!) {
+      sendMessage(text: $text) {
+        id
+        text
+        status
+        updatedAt
+        sender
+      }
+    }
+  `);
+  const [textMsg, setTextMsg] = useState('')
+  
+  useEffect(() => {
+    const unsubscribe = subscribeToMore({
+      document: MESSAGE_ADDED_SUBSCRIPTION,
+      updateQuery: (prev, { subscriptionData }) => {
+        if (!subscriptionData.data) return prev;
+        const newMessage = subscriptionData.data.messageAdded;
+        const newEdge = { node: newMessage, cursor: newMessage.id };
+
+        const edges = [...prev.messages.edges, newEdge];
+        return {
+          ...prev,
+          messages: {
+            ...prev.messages,
+            edges,
+            pageInfo: {
+              ...prev.messages.pageInfo,
+              endCursor: newMessage.id,
+            },
+          },
+        };
+      },
+    });
+    return () => unsubscribe();
+  }, [subscribeToMore]);
+  const virtuosoHandleRef = useRef<VirtuosoHandle>(null);
   return (
     <div className={css.root}>
       <div className={css.container}>
-        <Virtuoso className={css.list} data={temp_data} itemContent={getItem} />
+        <Virtuoso ref={virtuosoHandleRef} className={css.list} data={data?.messages.edges.map((edge) => edge.node)} itemContent={getItem} />
       </div>
-      <div className={css.footer}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          sendMessage({ variables: { text: textMsg } });
+          setTextMsg('');
+        }}
+        className={css.footer}
+      >
         <input
           type="text"
+          value={textMsg}
+          onChange={(e) => setTextMsg(e.target.value)}
           className={css.textInput}
           placeholder="Message text"
         />
-        <button>Send</button>
-      </div>
+        <button type="submit">Send</button>
+      </form>
     </div>
   );
 };
