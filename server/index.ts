@@ -19,6 +19,7 @@ import {
 import { delay } from "./delay";
 
 const PORT = 4000;
+const SIMULATE_NETWORK_PING_DELAY = 2000;
 const pubsub = new PubSub();
 
 const MESSAGE_ADDED = "MESSAGE_ADDED";
@@ -32,24 +33,28 @@ const messages: Message[] = Array.from(Array(30), (_, index) => ({
   sender: index % 2 ? MessageSender.Admin : MessageSender.Customer,
 }));
 
-const updateMessage = async (message: Message) => {
-  await delay(1000);
+const publishMessage = (index: number, message: Message, status: MessageStatus) => {
+  const updatedAt = new Date().toISOString();
+  messages[index].status = status;
+  messages[index].updatedAt = updatedAt;
   pubsub.publish(MESSAGE_UPDATED, {
     messageUpdated: {
       ...message,
-      status: MessageStatus.Sent,
-      updatedAt: new Date().toISOString(),
+      updatedAt,
+      status,
     },
   });
+}
+
+const updateMessage = async (message: Message) => {
+  const messageIndex = messages.findIndex((m) => m.id === message.id)
+  if (messageIndex === -1) return
+
+  await delay(1000);
+  publishMessage(messageIndex, message, MessageStatus.Sent)
 
   await delay(15000);
-  pubsub.publish(MESSAGE_UPDATED, {
-    messageUpdated: {
-      ...message,
-      status: MessageStatus.Read,
-      updatedAt: new Date().toISOString(),
-    },
-  });
+  publishMessage(messageIndex, message, MessageStatus.Read)
 };
 
 const typeDefs = `#graphql
@@ -118,7 +123,9 @@ const resolvers: Resolvers = {
 
       // Filter and paginate the data
       const slicedMessages = messages.slice(afterIndex + 1, beforeIndex);
-      const paginatedMessages = slicedMessages.slice(0, first || 10);
+      const limit = first || 10;
+      const startIndex = Math.max(0, slicedMessages.length - limit);
+      const paginatedMessages = slicedMessages.slice(startIndex);
 
       // Create edges
       const edges = paginatedMessages.map((message) => ({
@@ -136,10 +143,8 @@ const resolvers: Resolvers = {
         pageInfo: {
           startCursor,
           endCursor,
-          hasNextPage:
-            beforeIndex < messages.length ||
-            slicedMessages.length > (first || 10),
-          hasPreviousPage: afterIndex >= 0,
+          hasNextPage: beforeIndex < messages.length,
+          hasPreviousPage: startIndex > 0,
         },
       };
     },
@@ -199,11 +204,21 @@ const schema = makeExecutableSchema({ typeDefs, resolvers });
 const app = express();
 const httpServer = createServer(app);
 
-// Set up WebSocket server.
-const wsServer = new WebSocketServer({
-  server: httpServer,
-  path: "/graphql",
+
+const wsServer = new WebSocketServer({ noServer: true });
+httpServer.on("upgrade", (request, socket, head) => {
+  const url = request.url || "";
+  if (url.startsWith("/graphql")) {
+    setTimeout(() => {
+      wsServer.handleUpgrade(request, socket, head, (ws) => {
+        wsServer.emit("connection", ws, request);
+      });
+    }, SIMULATE_NETWORK_PING_DELAY);
+  } else {
+    socket.destroy();
+  }
 });
+
 const serverCleanup = useServer({ schema }, wsServer);
 
 // Set up ApolloServer.
@@ -231,6 +246,7 @@ app.use(
   "/graphql",
   cors<cors.CorsRequest>(),
   bodyParser.json(),
+  (req, _res, next) => setTimeout(next, SIMULATE_NETWORK_PING_DELAY),
   expressMiddleware(server)
 );
 
@@ -243,7 +259,7 @@ httpServer.listen(PORT, () => {
 });
 
 const asyncReplyMessage = () => {
-  let timeout = setTimeout(() => {
+  const timeout = setTimeout(() => {
     clearTimeout(timeout);
     if (messages[messages.length - 1]?.sender === MessageSender.Admin) {
       const index = messages.length + 1;
@@ -256,6 +272,7 @@ const asyncReplyMessage = () => {
         sender: MessageSender.Customer,
       };
 
+      messages.push(messageAdded)
       pubsub.publish(MESSAGE_ADDED, { messageAdded });
     }
 
