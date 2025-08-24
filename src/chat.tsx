@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ItemContent, Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import cn from "clsx";
+import { useMutation, useQuery } from "@apollo/client";
+
+import css from "./chat.module.css";
+import { MESSAGE_ADDED_SUBSCRIPTION, MESSAGE_UPDATED_SUBSCRIPTION, GET_MESSAGES, SEND_MESSAGE_MUTATION } from "./queries";
 import {
   MessageSender,
   MessageStatus,
   type Message,
 } from "../__generated__/resolvers-types";
-import css from "./chat.module.css";
-import { gql, useMutation, useQuery } from "@apollo/client";
+
 
 // TODO: generate from schema
 type MessageEdgeType = { __typename?: "MessageEdge"; node: Message; cursor: string };
@@ -39,9 +42,16 @@ const Item: React.FC<Message> = ({ text, sender, status }) => {
           sender === MessageSender.Admin ? css.out : css.in
         )}
       >
-      {status === MessageStatus.Sending && (
-        <span className={css.loader} aria-label="Sending" />
-      )}
+        {status === MessageStatus.Sending && (
+          <span className={css.loader} aria-label="Sending" />
+        )}
+        {sender === MessageSender.Admin && (
+          status === MessageStatus.Sent ? (
+            <span className={css.status} aria-label="Sent">✓</span>
+          ) : status === MessageStatus.Read ? (
+            <span className={`${css.status} ${css.read}`} aria-label="Read">✓✓</span>
+          ) : null
+        )}
         <span>{text}</span>
       </div>
     </div>
@@ -52,68 +62,10 @@ const getItem: ItemContent<Message, unknown> = (_, data) => {
   return <Item {...data} />;
 };
 
-const MESSAGE_ADDED_SUBSCRIPTION = gql`
-  subscription OnMessageAdded {
-    messageAdded {
-      id
-      text
-      status
-      updatedAt
-      sender
-    }
-  }
-`;
-
-const MESSAGE_UPDATED_SUBSCRIPTION = gql`
-  subscription OnMessageUpdated {
-    messageUpdated {
-      id
-      status
-      updatedAt
-    }
-  }
-`;
-
-const GET_MESSAGES = gql`
-  query GetMessages($first: Int, $after: MessagesCursor, $before: MessagesCursor) {
-    messages(first: $first, after: $after, before: $before) {
-      edges {
-        node {
-          id
-          text
-          status
-          updatedAt
-          sender
-        }
-        cursor
-      }
-      pageInfo {
-        hasNextPage
-        hasPreviousPage
-        startCursor
-        endCursor
-      }
-    }
-  }
-`;
-
-const SEND_MESSAGE_MUTATION = gql`
-  mutation SendMessage($text: String!) {
-    sendMessage(text: $text) {
-      id
-      text
-      status
-      updatedAt
-      sender
-      __typename
-    }
-  }
-`;
 
 const PAGE_SIZE = 20;
 
 export const Chat: React.FC = () => {
-  
   const { data, subscribeToMore, loading, fetchMore } = useQuery<MessagesQueryData>(
     GET_MESSAGES,
     {
@@ -121,7 +73,6 @@ export const Chat: React.FC = () => {
       notifyOnNetworkStatusChange: true,
     }
   );
-  const [isFetchingMore, setIsFetchingMore] = useState(false);
 
   useEffect(() => {
     const unsubscribeAdded = subscribeToMore<MessageAddedData>({
@@ -129,6 +80,7 @@ export const Chat: React.FC = () => {
       updateQuery: (prev, { subscriptionData }) => {
         if (!subscriptionData.data) return prev;
         const newMessage = subscriptionData.data.messageAdded;
+        // Remove temp messages from previously optimistically sent
         const withoutTemps = prev.messages.edges.filter(
           (e: MessageEdgeType) => !(String(e.node.id).startsWith("temp-") && e.node.text === newMessage.text)
         );
@@ -141,7 +93,7 @@ export const Chat: React.FC = () => {
         const newEdge: MessageEdgeType = { __typename: "MessageEdge", node: newMessage, cursor: newMessage.id };
 
         const edges = [...withoutTemps, newEdge];
-        return {
+        return { // TODO: immer.js
           ...prev,
           messages: {
             ...prev.messages,
@@ -162,7 +114,7 @@ export const Chat: React.FC = () => {
         const updated = subscriptionData.data.messageUpdated;
         const edges = prev.messages.edges.map((edge: MessageEdgeType) =>
           edge.node.id === updated.id
-            ? {
+            ? { // TODO: immer.js
                 ...edge,
                 node: {
                   ...edge.node,
@@ -188,10 +140,10 @@ export const Chat: React.FC = () => {
     };
   }, [subscribeToMore]);
 
-  const virtuosoHandleRef = useRef<VirtuosoHandle>(null);
-
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  // Workaround for virtuoso startReached bug
+  // https://github.com/petyosi/react-virtuoso/discussions/1177#discussioncomment-11815508
   const handleEndReached = async () => {
-    // Workaround for Virtuoso startReached https://github.com/petyosi/react-virtuoso/discussions/1177#discussioncomment-11815508
     if (isFetchingMore) return;
     const pageInfo = data?.messages.pageInfo;
     const before = pageInfo?.startCursor;
@@ -219,7 +171,7 @@ export const Chat: React.FC = () => {
         const edges = already
           ? withoutTemps
           : [...withoutTemps, { __typename: "MessageEdge", node: real, cursor: real.id } as MessageEdgeType];
-        return {
+        return { // TODO: immer.js
           ...prev,
           messages: {
             ...prev.messages,
@@ -233,9 +185,38 @@ export const Chat: React.FC = () => {
       });
     },
   });
-  const [textMsg, setTextMsg] = useState('')
 
+
+  const virtuosoHandleRef = useRef<VirtuosoHandle>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [inputValue, setInputValue] = useState('')
   const initialLoading = !data && loading;
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    // Temp id for optimistic update
+    const tempId = `temp-${Math.random().toString(36).slice(2)}`;
+    const nowIso = new Date().toISOString();
+    sendMessage({
+      variables: { text: inputValue },
+      optimisticResponse: {
+        sendMessage: {
+          __typename: "Message",
+          id: tempId,
+          text: inputValue,
+          status: MessageStatus.Sending,
+          updatedAt: nowIso,
+          sender: MessageSender.Admin,
+        },
+      },
+    });
+    setInputValue('');
+    virtuosoHandleRef.current?.scrollToIndex({
+      index: 0,
+      behavior: 'auto'
+    })
+    inputRef.current?.focus();
+  }
   
   return (
     <div className={css.root}>
@@ -262,39 +243,18 @@ export const Chat: React.FC = () => {
         )}
       </div>
       <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const tempId = `temp-${Math.random().toString(36).slice(2)}`;
-          const nowIso = new Date().toISOString();
-          sendMessage({
-            variables: { text: textMsg },
-            optimisticResponse: {
-              sendMessage: {
-                __typename: "Message",
-                id: tempId,
-                text: textMsg,
-                status: MessageStatus.Sending,
-                updatedAt: nowIso,
-                sender: MessageSender.Admin,
-              },
-            },
-          });
-          setTextMsg('');
-          virtuosoHandleRef.current?.scrollToIndex({
-            index: 0,
-            behavior: 'auto'
-          })
-        }}
+        onSubmit={handleSubmit}
         className={css.footer}
       >
         <input
           type="text"
-          value={textMsg}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTextMsg(e.target.value)}
+          value={inputValue}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInputValue(e.target.value)}
           className={css.textInput}
           placeholder="Message text"
+          ref={inputRef}
         />
-        <button type="submit" disabled={initialLoading || textMsg.trim() === ''}>Send</button>
+        <button type="submit" disabled={initialLoading || inputValue.trim() === ''}>Send</button>
       </form>
     </div>
   );

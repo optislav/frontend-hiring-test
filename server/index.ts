@@ -19,13 +19,13 @@ import {
 import { delay } from "./delay";
 
 const PORT = 4000;
-const SIMULATE_NETWORK_PING_DELAY = 800;
+const SIMULATE_NETWORK_PING_DELAY = 600;
 const pubsub = new PubSub();
 
 const MESSAGE_ADDED = "MESSAGE_ADDED";
 const MESSAGE_UPDATED = "MESSAGE_UPDATED";
 
-const messages: Message[] = Array.from(Array(150), (_, index) => ({
+const messages: Message[] = Array.from(Array(90), (_, index) => ({
   id: String(index),
   text: `Message number ${index}`,
   status: MessageStatus.Read,
@@ -53,7 +53,7 @@ const updateMessage = async (message: Message) => {
   await delay(1000);
   publishMessage(messageIndex, message, MessageStatus.Sent)
 
-  await delay(15000);
+  await delay(10000);
   publishMessage(messageIndex, message, MessageStatus.Read)
 };
 
@@ -205,20 +205,11 @@ const app = express();
 const httpServer = createServer(app);
 
 
-const wsServer = new WebSocketServer({ noServer: true });
-httpServer.on("upgrade", (request, socket, head) => {
-  const url = request.url || "";
-  if (url.startsWith("/graphql")) {
-    setTimeout(() => {
-      wsServer.handleUpgrade(request, socket, head, (ws) => {
-        wsServer.emit("connection", ws, request);
-      });
-    }, SIMULATE_NETWORK_PING_DELAY);
-  } else {
-    socket.destroy();
-  }
+// Set up WebSocket server.
+const wsServer = new WebSocketServer({
+  server: httpServer,
+  path: "/graphql",
 });
-
 const serverCleanup = useServer({ schema }, wsServer);
 
 // Set up ApolloServer.

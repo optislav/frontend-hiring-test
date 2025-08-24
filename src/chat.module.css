@@ -20,7 +20,7 @@
 
 .message {
   display: flex;
-  align-items: center;
+  align-items: end;
   width: fit-content;
   max-width: 26.25rem;
   padding: 0.75rem;
@@ -36,6 +36,7 @@
 .message.out {
   background-color: #e0f0ff;
   margin-left: auto;
+  text-align: right;
   border-radius: 12px 12px 4px;
 }
 
@@ -58,10 +59,13 @@
 }
 
 .loader {
-  width: 12px;
-  height: 12px;
+  z-index: 10;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-bottom: 5px;
   border-radius: 50%;
-  border: 2px solid currentColor;
+  border: 2px solid #a7d1f7;
   border-right-color: transparent;
   animation: spin 0.8s linear infinite;
 }
@@ -83,4 +87,14 @@
   position: absolute;
   top: 3px;
   left: 50%;
+}
+
+.status {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #8c8f93;
+}
+
+.read {
+  color: #2f80ed;
 }
