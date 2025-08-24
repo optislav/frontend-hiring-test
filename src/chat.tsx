@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import { ItemContent, Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import cn from "clsx";
 import {
@@ -40,8 +40,8 @@ const MESSAGE_ADDED_SUBSCRIPTION = gql`
   }
 `;
 
-export const Chat: React.FC = () => {
-  const { data, subscribeToMore } = useQuery(gql`
+const MessagesList = () => {
+  const { data, subscribeToMore, loading } = useQuery(gql`
    query GetMessages {
       messages {
         edges {
@@ -62,6 +62,50 @@ export const Chat: React.FC = () => {
       }
     }
   `);
+
+useEffect(() => {
+  const unsubscribe = subscribeToMore({
+    document: MESSAGE_ADDED_SUBSCRIPTION,
+    updateQuery: (prev, { subscriptionData }) => {
+      if (!subscriptionData.data) return prev;
+      const newMessage = subscriptionData.data.messageAdded;
+      const newEdge = { node: newMessage, cursor: newMessage.id };
+
+      const edges = [...prev.messages.edges, newEdge];
+      return {
+        ...prev,
+        messages: {
+          ...prev.messages,
+          edges,
+          pageInfo: {
+            ...prev.messages.pageInfo,
+            endCursor: newMessage.id,
+          },
+        },
+      };
+    },
+  });
+  return () => unsubscribe();
+}, [subscribeToMore]);
+
+const virtuosoHandleRef = useRef<VirtuosoHandle>(null);
+return (
+  <div className={css.container}>
+    {loading ? (
+      <div>Loading...</div>
+    ) : (
+      <Virtuoso
+        ref={virtuosoHandleRef}
+        className={css.list}
+        data={data?.messages.edges.map((edge) => edge.node)}
+        itemContent={getItem}
+      />
+    )}
+  </div>
+)
+}
+
+export const Chat: React.FC = () => {
   const [sendMessage] = useMutation(gql`
     mutation SendMessage($text: String!) {
       sendMessage(text: $text) {
@@ -75,36 +119,9 @@ export const Chat: React.FC = () => {
   `);
   const [textMsg, setTextMsg] = useState('')
   
-  useEffect(() => {
-    const unsubscribe = subscribeToMore({
-      document: MESSAGE_ADDED_SUBSCRIPTION,
-      updateQuery: (prev, { subscriptionData }) => {
-        if (!subscriptionData.data) return prev;
-        const newMessage = subscriptionData.data.messageAdded;
-        const newEdge = { node: newMessage, cursor: newMessage.id };
-
-        const edges = [...prev.messages.edges, newEdge];
-        return {
-          ...prev,
-          messages: {
-            ...prev.messages,
-            edges,
-            pageInfo: {
-              ...prev.messages.pageInfo,
-              endCursor: newMessage.id,
-            },
-          },
-        };
-      },
-    });
-    return () => unsubscribe();
-  }, [subscribeToMore]);
-  const virtuosoHandleRef = useRef<VirtuosoHandle>(null);
   return (
     <div className={css.root}>
-      <div className={css.container}>
-        <Virtuoso ref={virtuosoHandleRef} className={css.list} data={data?.messages.edges.map((edge) => edge.node)} itemContent={getItem} />
-      </div>
+      <MessagesList />
       <form
         onSubmit={(e) => {
           e.preventDefault();
